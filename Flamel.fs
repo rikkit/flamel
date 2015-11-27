@@ -7,23 +7,20 @@
 
 open System
 open System.Text
+open System.IO
 
 [<EntryPoint>]
 let main argv = 
-    // The path of the source directory
-    let src = new StringBuilder()
-
     // Parse args to get the source directory if applicable, otherwise use the current directory
-    match argv with
-    | [|dir|] -> src.Append(Environment.CurrentDirectory).Append("/").Append(dir)
-    | _ -> src.Append(Environment.CurrentDirectory)
-    |> ignore
+    let src = match argv with
+        | [|dir|] -> dir
+        | _ -> Environment.CurrentDirectory
 
     printfn "Flamel static site generator v0.4"
     printfn "Using source directory: %s" (src.ToString())
 
     // Do an initial parse
-    Parser.Parse.markdown(src.ToString())
+    Parser.parseFolder(src.ToString())
 
     // Launch a web server to serve the files
     WebServer.listener (fun req resp ->
@@ -34,8 +31,11 @@ let main argv =
     })
     printfn "Started server at %s" WebServer.listenAddress
 
-    // Set up the file watcher to reparse the source files on changes
-    FileWatcher.setupFileWatcher(src.ToString())
+    // Set up the file watcher to reparse the source files on changes    
+    for ext in Parser.markdownFileExts do
+        FileWatcher.setupFileWatcher(src, ext)
+
+    FileWatcher.setupFileWatcher(Path.Combine(src, "_includes"), "html")
 
     // Keeps the application running until the user presses a key to exit
     Console.ReadLine() |> ignore

@@ -9,7 +9,12 @@ module Parser
     open System
     open System.IO
     open System.Collections.Generic
-    open FSharp.Markdown
+    open MarkdownSharp
+
+    [<Literal>]
+    let METADATA_PREFIX : string = "="
+
+    let markdownFileExts = ["md"; "markdown"; "mdown"]
 
     /// Functions that fetch files that should be included.
     module Include =
@@ -50,49 +55,34 @@ module Parser
                 | _ -> ()
 
             dict
+        
+    /// Parses and converts Markdown files into HTML files.
+    let parseFolder(dir : string) =
+        let timer = Diagnostics.Stopwatch.StartNew()
 
-    /// Functions that are used to parse files (e.g. Markdown, templates).
-    module Parse =
-        /// Parses and converts Markdown files into HTML files.
-        let markdown(dir : string) =
-            let timer = Diagnostics.Stopwatch.StartNew()
+        let allFiles = markdownFileExts
+                    |> Seq.collect (fun a -> Directory.EnumerateFiles(dir, "*." + a, SearchOption.AllDirectories))
+        
+        let options = new MarkdownOptions (AutoHyperlink = true)
+        let markdown = new Markdown(options)
 
-            for mdFile in Directory.EnumerateFiles(dir, "*.md", SearchOption.AllDirectories) do
-                let htmlFile = Path.ChangeExtension(mdFile, "html")
-                let mdArray = File.ReadAllLines mdFile
+        for mdPath in allFiles do 
+            let textLines = File.ReadAllLines mdPath
 
-                // Convert the array to a multiline string
-                let lines =
-                    let re = Text.RegularExpressions.Regex(@"#(\d+)")
-                    [|for line in mdArray ->
-                        re.Replace(line.Replace("{", "{{").Replace("}", "}}").Trim(), "$1", 1)|]
-                let mdString = String.Join("\n", lines)
+            let metadataLines = textLines |> Seq.takeWhile(fun line -> line.StartsWith METADATA_PREFIX)
+            let metadataString = String.Join(Environment.NewLine, metadataLines)
+            let metadata = Metadata.extract(metadataString)
 
-                // Extract the metadata into a dictionary
-                let metadata = Metadata.extract(mdString)
+            let mdLines = textLines |> Seq.skipWhile(fun line -> line.StartsWith METADATA_PREFIX)
+            let mdDoc = String.Join(Environment.NewLine, mdLines)
+                    
+            let html =
+                Include.header(dir)
+                + markdown.Transform(mdDoc)
+                + Include.footer(dir)
+                    
+            let htmlPath = Path.ChangeExtension(mdPath, "html") // Store html next to its source file
+            File.WriteAllText(htmlPath, html)
 
-                // Rebuild the Markdown string without the metadata block to parse for the page content
-                let markdown =
-                    let sb = new Text.StringBuilder()
-
-                    // metadata.Count is the number of items we read, and there are two separator lines
-                    for i in metadata.Count + 2 .. mdArray.Length - 1 do
-                        sb.Append(Array.get mdArray i).Append("\n") |> ignore
-                    sb.ToString()
-
-                // Construct the page
-                let page : string =
-                    Include.header(dir)
-                    + metadata.Item("title")
-                    + Include.body(dir)
-                    + Include.navigation(dir)
-                    + Markdown.TransformHtml(markdown)
-                    + Include.footer(dir)
-
-                // Save the page to file
-                File.WriteAllText(htmlFile, page)
-
-                printfn "%s -> %s" mdFile htmlFile
-
-            timer.Stop()
-            printfn "Done in %f ms" timer.Elapsed.TotalMilliseconds
+        timer.Stop()
+        printfn "Done in %f ms" timer.Elapsed.TotalMilliseconds
